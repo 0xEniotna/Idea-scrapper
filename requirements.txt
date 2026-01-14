@@ -14,9 +14,8 @@ webdriver-manager>=4.0.0
 
 # Reddit: No API key required - uses public JSON endpoints
 
-# App Store scraping
+# Google Play Store scraping
 google-play-scraper>=1.2.4
-app-store-scraper>=0.3.5
 
 # Natural Language Processing
 nltk>=3.8.0

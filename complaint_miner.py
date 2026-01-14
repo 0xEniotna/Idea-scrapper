@@ -7,7 +7,7 @@ Based on Om Patel's playbook for finding startup ideas by mining user complaints
 "Every complaint is someone saying 'I would pay for this to not suck'"
 
 Usage:
-    python complaint_miner.py --topic "golf" --sources reddit,appstore --min_mentions 15
+    python complaint_miner.py --topic "golf" --sources reddit,google_play --min_mentions 15
     python complaint_miner.py --topic "crypto" --sources all
     python complaint_miner.py --topic "meditation apps" --sources reddit,google_play
 
@@ -56,13 +56,6 @@ try:
 except ImportError:
     GPLAY_AVAILABLE = False
     print("Note: Install 'google-play-scraper' for Google Play: pip install google-play-scraper")
-
-try:
-    from app_store_scraper import AppStore
-    APPSTORE_AVAILABLE = True
-except ImportError:
-    APPSTORE_AVAILABLE = False
-    print("Note: Install 'app-store-scraper' for App Store: pip install app-store-scraper")
 
 # NLTK for NLP
 try:
@@ -765,116 +758,6 @@ class GooglePlayScraper:
 
 
 # =============================================================================
-# APP STORE SCRAPER (iOS)
-# =============================================================================
-
-class AppStoreScraper:
-    """Scrape complaints from Apple App Store reviews."""
-
-    def __init__(self, topic: str):
-        self.topic = topic
-
-    def search_apps(self) -> list[dict]:
-        """Search for apps on App Store (using known apps for topic)."""
-        # Note: app-store-scraper doesn't have a search function,
-        # so we use predefined apps or Google Play search results
-        topic_lower = self.topic.lower().replace(" ", "_")
-
-        # Predefined popular apps by topic (app_name, app_id pairs)
-        topic_apps = {
-            "meditation": [
-                ("Headspace", "493145008"),
-                ("Calm", "571800810"),
-                ("Insight Timer", "337472899"),
-            ],
-            "fitness": [
-                ("MyFitnessPal", "341232718"),
-                ("Nike Training Club", "301521403"),
-                ("Strava", "426826309"),
-            ],
-            "finance": [
-                ("Mint", "300238550"),
-                ("YNAB", "1010865877"),
-                ("Personal Capital", "504672168"),
-            ],
-            "productivity": [
-                ("Notion", "1232780281"),
-                ("Todoist", "585829637"),
-                ("Things 3", "904237743"),
-            ],
-        }
-
-        if topic_lower in topic_apps:
-            return [{"name": name, "app_id": app_id} for name, app_id in topic_apps[topic_lower]]
-
-        # For other topics, we'd need to use a different approach
-        print_info(f"No predefined App Store apps for '{self.topic}'. Using Google Play data.")
-        return []
-
-    def get_low_star_reviews(self, app_name: str, app_id: str) -> list[Complaint]:
-        """Get low-star reviews from App Store."""
-        if not APPSTORE_AVAILABLE:
-            return []
-
-        complaints = []
-
-        try:
-            app = AppStore(country='us', app_name=app_name, app_id=app_id)
-            app.review(how_many=SCRAPING_CONFIG["max_app_reviews"])
-
-            for review in app.reviews:
-                if review.get('rating', 5) <= 2:  # 1-2 star reviews
-                    complaint = Complaint(
-                        text=str(review.get('review', ''))[:2000],
-                        source="app_store",
-                        topic=self.topic,
-                        product_name=app_name,
-                        rating=review.get('rating', 0),
-                        date=str(review.get('date', '')),
-                        keywords_found=self._extract_keywords(str(review.get('review', ''))),
-                        category=self._categorize_complaint(str(review.get('review', ''))),
-                    )
-                    complaints.append(complaint)
-
-            time.sleep(SCRAPING_CONFIG["appstore_delay"])
-
-        except Exception as e:
-            logger.debug(f"Error getting App Store reviews for {app_name}: {e}")
-
-        return complaints
-
-    def scrape_all(self) -> list[Complaint]:
-        """Scrape all App Store reviews for topic."""
-        apps = self.search_apps()
-        all_complaints = []
-
-        for app in apps:
-            print_info(f"  Analyzing App Store: {app['name']}")
-            complaints = self.get_low_star_reviews(app['name'], app['app_id'])
-            all_complaints.extend(complaints)
-
-        print_success(f"Collected {len(all_complaints)} reviews from App Store")
-        return all_complaints
-
-    def _extract_keywords(self, text: str) -> list[str]:
-        text_lower = text.lower()
-        found = []
-        for keywords in COMPLAINT_KEYWORDS.values():
-            for keyword in keywords:
-                if keyword in text_lower:
-                    found.append(keyword)
-        return found
-
-    def _categorize_complaint(self, text: str) -> str:
-        text_lower = text.lower()
-        for category, keywords in COMPLAINT_KEYWORDS.items():
-            for keyword in keywords:
-                if keyword in text_lower:
-                    return category
-        return "general"
-
-
-# =============================================================================
 # G2/CAPTERRA SCRAPER
 # =============================================================================
 
@@ -1365,10 +1248,6 @@ class ComplaintMiner:
                 scraper = GooglePlayScraper(self.topic)
                 complaints = scraper.scrape_all()
 
-            elif source == 'app_store' or source == 'appstore':
-                scraper = AppStoreScraper(self.topic)
-                complaints = scraper.scrape_all()
-
             elif source == 'g2':
                 scraper = G2Scraper(self.topic)
                 complaints = scraper.scrape_all()
@@ -1533,19 +1412,18 @@ def parse_arguments():
 Examples:
   python complaint_miner.py --topic "golf" --sources reddit,google_play
   python complaint_miner.py --topic "crypto" --sources all --min_mentions 20
-  python complaint_miner.py --topic "meditation apps" --sources reddit,app_store
+  python complaint_miner.py --topic "meditation apps" --sources reddit,google_play
   python complaint_miner.py --topic "CRM software" --sources g2,reddit
 
 Available sources:
-  reddit       - Reddit posts and comments (requires API credentials)
+  reddit       - Reddit posts and comments (no API key required)
   google_play  - Google Play Store 1-2 star reviews
-  app_store    - Apple App Store 1-2 star reviews
   g2           - G2 B2B software reviews
   upwork       - Upwork job posts (automation opportunities)
   all          - All available sources
 
 Tips:
-  - Set Reddit API credentials in config.py or environment variables
+  - No API keys required - all sources work out of the box
   - Use specific topics like "golf swing analysis" for better results
   - Higher --min_mentions values produce more validated ideas
         """
