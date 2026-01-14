@@ -13,7 +13,7 @@ This tool automates the discovery process outlined in the viral playbook:
 | **G2/Capterra** | Filter 1-2★ B2B reviews | "doesn't have", "wish it could", "missing", "can't" |
 | **Reddit** | Search topic + frustration keywords | "frustrating", "hate when", "wish someone would" |
 | **Upwork** | Find repetitive paid tasks | "weekly", "monthly", "ongoing", "repeat" |
-| **App Stores** | Read 1★ reviews of top apps | Same complaint 20+ times = validated opportunity |
+| **Google Play** | Read 1★ reviews of top apps | Same complaint 20+ times = validated opportunity |
 
 **Validation Formula:** 30+ mentions + willingness to pay = validated idea
 
@@ -40,7 +40,7 @@ python complaint_miner.py --topic "crypto" --sources all --min_mentions 20
 python complaint_miner.py --topic "CRM software" --sources g2,reddit
 
 # Mobile app opportunities
-python complaint_miner.py --topic "meditation apps" --sources google_play,app_store
+python complaint_miner.py --topic "meditation apps" --sources google_play
 ```
 
 ## Usage Examples
@@ -116,7 +116,6 @@ Options:
 |--------|-------------|--------------|
 | `reddit` | Reddit posts and comments | None (uses public JSON endpoints) |
 | `google_play` | Google Play 1-2★ reviews | None (uses google-play-scraper) |
-| `app_store` | Apple App Store 1-2★ reviews | None (uses app-store-scraper) |
 | `g2` | G2 B2B software reviews | None (web scraping) |
 | `upwork` | Upwork job patterns | None (search framework) |
 | `all` | All available sources | None - all sources work without API keys |
@@ -242,7 +241,7 @@ If you see "Reddit rate limit hit. Waiting 60 seconds...", this is normal. The t
 
 ```bash
 # Install missing dependencies
-pip install google-play-scraper app-store-scraper nltk rich requests beautifulsoup4
+pip install google-play-scraper nltk rich requests beautifulsoup4
 ```
 
 ## Contributing
