@@ -25,23 +25,9 @@ This tool automates the discovery process outlined in the viral playbook:
 pip install -r requirements.txt
 ```
 
-### 2. Configure API Credentials
+### 2. Run the Tool (No API Keys Required!)
 
-```bash
-# Copy the template
-cp config_template.py config.py
-
-# Edit config.py with your credentials
-# At minimum, you need Reddit API keys for full functionality
-```
-
-**Getting Reddit API Keys:**
-1. Go to https://www.reddit.com/prefs/apps
-2. Click "Create App" or "Create Another App"
-3. Select "script" type
-4. Copy the `client_id` (under app name) and `client_secret`
-
-### 3. Run the Tool
+**Reddit scraping uses public JSON endpoints** - just append `.json` to any Reddit URL. No API key needed!
 
 ```bash
 # Basic usage - mine complaints about golf
@@ -128,12 +114,12 @@ Options:
 
 | Source | Description | Requirements |
 |--------|-------------|--------------|
-| `reddit` | Reddit posts and comments | Reddit API credentials |
+| `reddit` | Reddit posts and comments | None (uses public JSON endpoints) |
 | `google_play` | Google Play 1-2★ reviews | None (uses google-play-scraper) |
 | `app_store` | Apple App Store 1-2★ reviews | None (uses app-store-scraper) |
 | `g2` | G2 B2B software reviews | None (web scraping) |
 | `upwork` | Upwork job patterns | None (search framework) |
-| `all` | All available sources | Reddit API for full functionality |
+| `all` | All available sources | None - all sources work without API keys |
 
 ## Output Files
 
@@ -239,18 +225,12 @@ Once you find a validated idea:
 
 ## Troubleshooting
 
-### Reddit API Errors
+### Reddit Rate Limiting
 
-```
-Reddit API not configured. Set credentials in config.py or environment variables.
-```
-
-**Solution:** Set up Reddit API credentials. You can also use environment variables:
-```bash
-export REDDIT_CLIENT_ID="your_client_id"
-export REDDIT_CLIENT_SECRET="your_client_secret"
-export REDDIT_USER_AGENT="StartupIdeaMiner/1.0"
-```
+If you see "Reddit rate limit hit. Waiting 60 seconds...", this is normal. The tool automatically waits and retries. To reduce rate limiting:
+- Increase `reddit_delay` in config.py (default: 2 seconds)
+- Search fewer subreddits per topic
+- Run searches at off-peak hours
 
 ### No Results Found
 
@@ -262,7 +242,7 @@ export REDDIT_USER_AGENT="StartupIdeaMiner/1.0"
 
 ```bash
 # Install missing dependencies
-pip install praw google-play-scraper app-store-scraper nltk rich
+pip install google-play-scraper app-store-scraper nltk rich requests beautifulsoup4
 ```
 
 ## Contributing

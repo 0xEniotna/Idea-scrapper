@@ -12,8 +12,7 @@ lxml>=4.9.0
 selenium>=4.15.0
 webdriver-manager>=4.0.0
 
-# Reddit API
-praw>=7.7.0
+# Reddit: No API key required - uses public JSON endpoints
 
 # App Store scraping
 google-play-scraper>=1.2.4

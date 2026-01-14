@@ -47,14 +47,7 @@ except ImportError:
     RICH_AVAILABLE = False
     print("Note: Install 'rich' for better console output: pip install rich")
 
-# PRAW for Reddit
-try:
-    import praw
-    from praw.exceptions import RedditAPIException
-    PRAW_AVAILABLE = True
-except ImportError:
-    PRAW_AVAILABLE = False
-    print("Note: Install 'praw' for Reddit scraping: pip install praw")
+# PRAW no longer required - using Reddit's public JSON endpoints
 
 # App store scrapers
 try:
@@ -403,35 +396,17 @@ class PatternExtractor:
 # =============================================================================
 
 class RedditScraper:
-    """Scrape complaints from Reddit using PRAW."""
+    """Scrape complaints from Reddit using public JSON endpoints (no API key required)."""
+
+    BASE_URL = "https://www.reddit.com"
 
     def __init__(self, topic: str):
         self.topic = topic
-        self.reddit = None
-        self._init_reddit()
-
-    def _init_reddit(self):
-        """Initialize Reddit API connection."""
-        if not PRAW_AVAILABLE:
-            print_warning("PRAW not available. Reddit scraping disabled.")
-            return
-
-        if not REDDIT_CONFIG.get("client_id") or REDDIT_CONFIG["client_id"] == "YOUR_REDDIT_CLIENT_ID":
-            print_warning("Reddit API not configured. Set credentials in config.py or environment variables.")
-            return
-
-        try:
-            self.reddit = praw.Reddit(
-                client_id=REDDIT_CONFIG["client_id"],
-                client_secret=REDDIT_CONFIG["client_secret"],
-                user_agent=REDDIT_CONFIG["user_agent"],
-            )
-            # Test connection
-            self.reddit.user.me()
-            print_success("Connected to Reddit API")
-        except Exception as e:
-            print_warning(f"Reddit API connection failed: {e}")
-            self.reddit = None
+        self.session = create_session()
+        # Reddit requires a descriptive User-Agent for JSON endpoints
+        self.session.headers.update({
+            "User-Agent": "StartupIdeaMiner/1.0 (complaint research tool)"
+        })
 
     def get_subreddits(self) -> list[str]:
         """Get relevant subreddits for the topic."""
@@ -450,13 +425,78 @@ class RedditScraper:
         defaults = TOPIC_SUBREDDITS.get("_default", ["entrepreneur"])
         return defaults + [topic_lower]
 
+    def _make_request(self, url: str, params: dict = None) -> Optional[dict]:
+        """Make a request to Reddit JSON endpoint with rate limiting."""
+        try:
+            # Reddit JSON endpoints require longer delays to avoid 429 errors
+            time.sleep(SCRAPING_CONFIG.get("reddit_delay", 2.0))
+
+            response = self.session.get(
+                url,
+                params=params,
+                timeout=SCRAPING_CONFIG.get("timeout", 30)
+            )
+
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 429:
+                print_warning("Reddit rate limit hit. Waiting 60 seconds...")
+                time.sleep(60)
+                return self._make_request(url, params)  # Retry once
+            else:
+                logger.debug(f"Reddit request failed: {response.status_code} for {url}")
+                return None
+
+        except Exception as e:
+            logger.debug(f"Reddit request error: {e}")
+            return None
+
+    def search_subreddit(self, subreddit: str, query: str, limit: int = 25) -> list[dict]:
+        """Search a subreddit using JSON endpoint."""
+        url = f"{self.BASE_URL}/r/{subreddit}/search.json"
+        params = {
+            "q": query,
+            "restrict_sr": "1",  # Restrict to subreddit
+            "sort": "relevance",
+            "limit": limit,
+            "t": "year",  # Time filter: past year
+        }
+
+        data = self._make_request(url, params)
+        if data and "data" in data and "children" in data["data"]:
+            return [post["data"] for post in data["data"]["children"]]
+        return []
+
+    def get_hot_posts(self, subreddit: str, limit: int = 30) -> list[dict]:
+        """Get hot posts from a subreddit using JSON endpoint."""
+        url = f"{self.BASE_URL}/r/{subreddit}/hot.json"
+        params = {"limit": limit}
+
+        data = self._make_request(url, params)
+        if data and "data" in data and "children" in data["data"]:
+            return [post["data"] for post in data["data"]["children"]]
+        return []
+
+    def search_all_reddit(self, query: str, limit: int = 50) -> list[dict]:
+        """Search all of Reddit using JSON endpoint."""
+        url = f"{self.BASE_URL}/search.json"
+        params = {
+            "q": query,
+            "sort": "relevance",
+            "limit": limit,
+            "t": "year",
+        }
+
+        data = self._make_request(url, params)
+        if data and "data" in data and "children" in data["data"]:
+            return [post["data"] for post in data["data"]["children"]]
+        return []
+
     def search_complaints(self) -> list[Complaint]:
         """Search Reddit for complaints related to the topic."""
-        if not self.reddit:
-            return []
-
         complaints = []
         subreddits = self.get_subreddits()
+        seen_ids = set()  # Avoid duplicates
 
         # Complaint search queries
         search_templates = [
@@ -470,70 +510,72 @@ class RedditScraper:
             f"{self.topic} annoying",
         ]
 
-        print_info(f"Searching Reddit in subreddits: {', '.join(subreddits[:5])}...")
+        print_info(f"Searching Reddit (JSON API) in subreddits: {', '.join(subreddits[:5])}...")
+        print_info("Note: Using public JSON endpoints - no API key required")
 
-        for subreddit_name in subreddits:
-            try:
-                subreddit = self.reddit.subreddit(subreddit_name)
+        # First, do a global Reddit search for the topic + complaint keywords
+        print_info("  Performing global Reddit search...")
+        for query in search_templates[:4]:
+            posts = self.search_all_reddit(query, limit=25)
+            for post_data in posts:
+                if post_data.get("id") not in seen_ids:
+                    seen_ids.add(post_data.get("id"))
+                    complaint = self._process_post_data(post_data)
+                    if complaint:
+                        complaints.append(complaint)
 
-                # Search with complaint-related queries
-                for query in search_templates[:3]:  # Limit queries per subreddit
-                    try:
-                        # Search posts
-                        for post in subreddit.search(query, limit=20, sort='relevance'):
-                            complaint = self._process_post(post)
-                            if complaint:
-                                complaints.append(complaint)
+        # Then search specific subreddits
+        for subreddit_name in subreddits[:5]:  # Limit to top 5 subreddits
+            print_info(f"  Searching r/{subreddit_name}...")
 
-                            time.sleep(SCRAPING_CONFIG["reddit_delay"])
+            # Search with complaint-related queries
+            for query in search_templates[:3]:
+                posts = self.search_subreddit(subreddit_name, query, limit=20)
+                for post_data in posts:
+                    if post_data.get("id") not in seen_ids:
+                        seen_ids.add(post_data.get("id"))
+                        complaint = self._process_post_data(post_data)
+                        if complaint:
+                            complaints.append(complaint)
 
-                    except Exception as e:
-                        logger.debug(f"Search error in r/{subreddit_name}: {e}")
-                        continue
-
-                # Also get controversial/hot posts that might contain complaints
-                try:
-                    for post in subreddit.hot(limit=30):
-                        if self._is_complaint_post(post):
-                            complaint = self._process_post(post)
-                            if complaint:
-                                complaints.append(complaint)
-
-                        time.sleep(SCRAPING_CONFIG["reddit_delay"] / 2)
-                except Exception:
-                    pass
-
-            except Exception as e:
-                logger.debug(f"Error accessing r/{subreddit_name}: {e}")
-                continue
+            # Also get hot posts that might contain complaints
+            hot_posts = self.get_hot_posts(subreddit_name, limit=25)
+            for post_data in hot_posts:
+                if post_data.get("id") not in seen_ids:
+                    seen_ids.add(post_data.get("id"))
+                    text = f"{post_data.get('title', '')} {post_data.get('selftext', '')}"
+                    if self._contains_complaint_keywords(text):
+                        complaint = self._process_post_data(post_data)
+                        if complaint:
+                            complaints.append(complaint)
 
         print_success(f"Found {len(complaints)} potential complaints from Reddit")
         return complaints
 
-    def _process_post(self, post) -> Optional[Complaint]:
-        """Process a Reddit post into a Complaint."""
-        text = f"{post.title} {post.selftext}"
+    def _process_post_data(self, post_data: dict) -> Optional[Complaint]:
+        """Process a Reddit post JSON data into a Complaint."""
+        title = post_data.get("title", "")
+        selftext = post_data.get("selftext", "")
+        text = f"{title} {selftext}"
 
         if not self._contains_complaint_keywords(text):
             return None
 
         keywords = self._extract_keywords(text)
+        permalink = post_data.get("permalink", "")
+        created_utc = post_data.get("created_utc", 0)
 
         return Complaint(
             text=text[:2000],  # Limit text length
             source="reddit",
             topic=self.topic,
-            url=f"https://reddit.com{post.permalink}",
-            upvotes=post.score,
-            date=datetime.fromtimestamp(post.created_utc).isoformat(),
+            url=f"https://reddit.com{permalink}" if permalink else "",
+            upvotes=post_data.get("score", 0),
+            date=datetime.fromtimestamp(created_utc).isoformat() if created_utc else "",
             keywords_found=keywords,
             category=self._categorize_complaint(text),
+            product_name=f"r/{post_data.get('subreddit', 'unknown')}",
         )
-
-    def _is_complaint_post(self, post) -> bool:
-        """Check if a post is likely a complaint."""
-        text = f"{post.title} {post.selftext}".lower()
-        return self._contains_complaint_keywords(text)
 
     def _contains_complaint_keywords(self, text: str) -> bool:
         """Check if text contains complaint keywords."""
