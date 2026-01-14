@@ -4,26 +4,12 @@ Configuration Template for Startup Idea Discovery Tool
 
 SETUP INSTRUCTIONS:
 1. Copy this file to 'config.py': cp config_template.py config.py
-2. Fill in your API credentials below
+2. Customize settings as needed (no API keys required!)
 3. Never commit config.py to version control (it's in .gitignore)
 
-For Reddit API credentials:
-- Go to https://www.reddit.com/prefs/apps
-- Click "Create App" or "Create Another App"
-- Select "script" type
-- Note the client_id (under the app name) and client_secret
+NOTE: Reddit scraping uses public JSON endpoints - NO API KEY NEEDED!
+Just append .json to any Reddit URL to get structured data.
 """
-
-# =============================================================================
-# REDDIT API CONFIGURATION (Required for Reddit scraping)
-# =============================================================================
-REDDIT_CONFIG = {
-    "client_id": "YOUR_REDDIT_CLIENT_ID",
-    "client_secret": "YOUR_REDDIT_CLIENT_SECRET",
-    "user_agent": "StartupIdeaMiner/1.0 (by /u/YOUR_USERNAME)",
-    "username": "",  # Optional: for authenticated requests
-    "password": "",  # Optional: for authenticated requests
-}
 
 # =============================================================================
 # SCRAPING SETTINGS
@@ -31,7 +17,7 @@ REDDIT_CONFIG = {
 SCRAPING_CONFIG = {
     # Rate limiting (seconds between requests)
     "request_delay": 2.0,
-    "reddit_delay": 1.0,
+    "reddit_delay": 2.0,  # Reddit JSON API needs slower requests
     "appstore_delay": 1.5,
 
     # Maximum items to fetch per source
