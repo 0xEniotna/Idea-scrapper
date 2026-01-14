@@ -194,9 +194,11 @@ class StartupIdea:
     pain_point: str
     mention_count: int
     sources: list
+    example_complaints: list = field(default_factory=list)  # Real quotes
+    failing_products: list = field(default_factory=list)     # Apps/products with this issue
+    feature_keywords: list = field(default_factory=list)     # Specific features mentioned
     target_audience: str = ""
     potential_revenue: str = ""
-    competition_notes: str = ""
 
 
 # =============================================================================
@@ -995,7 +997,30 @@ class UpworkScraper:
 # =============================================================================
 
 class IdeaGenerator:
-    """Generate startup ideas from complaint patterns."""
+    """Generate startup ideas from complaint patterns with actionable insights."""
+
+    # Feature keywords to extract from complaints - these become idea titles
+    FEATURE_PATTERNS = {
+        # Functionality issues
+        'offline': ['offline', 'without internet', 'no connection', 'no signal', 'airplane mode', 'no wifi', 'data connection'],
+        'sync': ['sync', 'syncing', 'synchronize', 'cloud sync', 'backup', 'restore', 'lost data', 'data loss'],
+        'gps': ['gps', 'location', 'accuracy', 'distance', 'tracking', 'map', 'course map'],
+        'ads': ['ads', 'advertisement', 'too many ads', 'ad free', 'premium', 'remove ads', 'annoying ads'],
+        'subscription': ['subscription', 'monthly fee', 'yearly', 'pay monthly', 'recurring', 'auto renew'],
+        'pricing': ['expensive', 'overpriced', 'too much', 'cost', 'price', 'pay for', 'not worth', 'free version'],
+        'battery': ['battery', 'drain', 'power', 'battery life', 'dies fast', 'uses too much battery'],
+        'ui_ux': ['confusing', 'hard to use', 'not intuitive', 'complicated', 'cluttered', 'ugly', 'interface'],
+        'speed': ['slow', 'loading', 'takes forever', 'lag', 'laggy', 'freeze', 'freezes', 'hangs'],
+        'crashes': ['crash', 'crashes', 'keeps crashing', 'force close', 'stops working', 'bug', 'buggy', 'glitch'],
+        'login': ['login', 'sign in', 'account', 'password', 'authentication', 'logout', 'logged out'],
+        'notifications': ['notification', 'alert', 'remind', 'reminder', 'push notification'],
+        'export': ['export', 'share', 'pdf', 'download', 'save', 'print', 'email'],
+        'integration': ['integrate', 'integration', 'connect', 'api', 'import', 'compatible', 'work with'],
+        'accuracy': ['accurate', 'accuracy', 'wrong', 'incorrect', 'inaccurate', 'miscalculate', 'error'],
+        'features_removed': ['removed', 'used to', 'old version', 'bring back', 'miss the old', 'downgrade', 'update broke'],
+        'missing_feature': ['wish', 'would be nice', 'should have', 'need', 'want', 'add', 'missing', 'no option'],
+        'customer_support': ['support', 'help', 'response', 'contact', 'customer service', 'no reply', 'ignored'],
+    }
 
     def __init__(self, topic: str, complaints: list[Complaint]):
         self.topic = topic
@@ -1005,48 +1030,49 @@ class IdeaGenerator:
     def analyze_complaints(self) -> dict:
         """Analyze all complaints and extract patterns."""
         texts = [c.text for c in self.complaints]
-
-        # Get key phrases
-        key_phrases = self.pattern_extractor.extract_key_phrases(texts)
-
-        # Get patterns by category
-        patterns = self.pattern_extractor.find_complaint_patterns(texts)
-
-        # Count categories
         category_counts = Counter(c.category for c in self.complaints)
-
-        # Count sources
         source_counts = Counter(c.source for c in self.complaints)
 
-        # Get most mentioned keywords
-        all_keywords = []
-        for c in self.complaints:
-            all_keywords.extend(c.keywords_found)
-        keyword_counts = Counter(all_keywords)
+        # Extract feature mentions
+        feature_counts = self._count_feature_mentions()
 
         return {
-            'key_phrases': key_phrases,
-            'patterns': patterns,
+            'feature_counts': feature_counts,
             'category_counts': dict(category_counts),
             'source_counts': dict(source_counts),
-            'keyword_counts': dict(keyword_counts.most_common(20)),
             'total_complaints': len(self.complaints),
         }
 
+    def _count_feature_mentions(self) -> dict:
+        """Count how many complaints mention each feature pattern."""
+        feature_counts = defaultdict(int)
+        for complaint in self.complaints:
+            text_lower = complaint.text.lower()
+            for feature, keywords in self.FEATURE_PATTERNS.items():
+                if any(kw in text_lower for kw in keywords):
+                    feature_counts[feature] += 1
+        return dict(feature_counts)
+
+    def _extract_features_from_text(self, text: str) -> list[str]:
+        """Extract which features are mentioned in a complaint."""
+        text_lower = text.lower()
+        features = []
+        for feature, keywords in self.FEATURE_PATTERNS.items():
+            if any(kw in text_lower for kw in keywords):
+                features.append(feature)
+        return features
+
     def generate_ideas(self, min_mentions: int = 5) -> list[StartupIdea]:
         """Generate startup ideas based on complaint patterns."""
+        # Group complaints by primary feature mentioned
+        feature_groups = self._group_by_feature()
+
         ideas = []
-        analysis = self.analyze_complaints()
-
-        # Group similar complaints
-        complaint_groups = self._group_similar_complaints()
-
-        for group_key, group_complaints in complaint_groups.items():
-            if len(group_complaints) < min_mentions:
+        for feature, complaints_list in feature_groups.items():
+            if len(complaints_list) < min_mentions:
                 continue
 
-            # Generate idea from this complaint cluster
-            idea = self._generate_idea_from_group(group_key, group_complaints)
+            idea = self._generate_idea_from_feature(feature, complaints_list)
             if idea:
                 ideas.append(idea)
 
@@ -1055,39 +1081,54 @@ class IdeaGenerator:
 
         return ideas[:OUTPUT_CONFIG["max_ideas"]]
 
-    def _group_similar_complaints(self) -> dict:
-        """Group complaints by similarity/theme."""
+    def _group_by_feature(self) -> dict:
+        """Group complaints by the primary feature/issue mentioned."""
         groups = defaultdict(list)
 
         for complaint in self.complaints:
-            # Group by category + primary keyword
-            if complaint.keywords_found:
-                key = f"{complaint.category}:{complaint.keywords_found[0]}"
-            else:
-                key = complaint.category
+            features = self._extract_features_from_text(complaint.text)
 
-            groups[key].append(complaint)
+            if features:
+                # Use primary (first matching) feature as key
+                primary_feature = features[0]
+                groups[primary_feature].append(complaint)
+            else:
+                # Fallback to category-based grouping
+                groups[f"general_{complaint.category}"].append(complaint)
 
         return dict(groups)
 
-    def _generate_idea_from_group(self, group_key: str, complaints: list[Complaint]) -> Optional[StartupIdea]:
-        """Generate a startup idea from a group of similar complaints."""
+    def _generate_idea_from_feature(self, feature: str, complaints: list[Complaint]) -> Optional[StartupIdea]:
+        """Generate a startup idea from complaints about a specific feature."""
         if not complaints:
             return None
 
-        # Extract common themes from complaint texts
-        texts = [c.text for c in complaints]
-        common_phrases = self.pattern_extractor.extract_key_phrases(texts, top_n=5)
+        # Get example complaints (best ones by upvotes, limited to 5)
+        sorted_complaints = sorted(complaints, key=lambda x: x.upvotes, reverse=True)
+        example_quotes = []
+        for c in sorted_complaints[:5]:
+            # Extract a clean, representative snippet
+            snippet = self._extract_best_snippet(c.text, feature)
+            if snippet and len(snippet) > 20:
+                example_quotes.append(snippet)
 
-        # Determine pain point
-        category = group_key.split(':')[0] if ':' in group_key else group_key
-        pain_point = self._extract_pain_point(texts, category)
+        # Get failing products
+        product_counts = Counter(c.product_name for c in complaints if c.product_name)
+        failing_products = [p for p, _ in product_counts.most_common(5) if p]
 
-        # Generate title and description
-        title, description = self._create_idea_content(category, pain_point, common_phrases)
+        # Get all feature keywords found
+        all_features = []
+        for c in complaints:
+            all_features.extend(self._extract_features_from_text(c.text))
+        feature_keywords = [f for f, _ in Counter(all_features).most_common(5)]
 
-        # Get sources involved
+        # Get sources
         sources = list(set(c.source for c in complaints))
+
+        # Generate smart title and description
+        title = self._create_smart_title(feature, failing_products)
+        pain_point = self._create_pain_point(feature, example_quotes)
+        description = self._create_description(feature, len(complaints), failing_products, example_quotes)
 
         return StartupIdea(
             title=title,
@@ -1095,74 +1136,116 @@ class IdeaGenerator:
             pain_point=pain_point,
             mention_count=len(complaints),
             sources=sources,
-            target_audience=self._infer_target_audience(category),
+            example_complaints=example_quotes[:3],
+            failing_products=failing_products,
+            feature_keywords=feature_keywords,
+            target_audience=self._infer_target_audience(),
             potential_revenue=self._estimate_potential(len(complaints)),
         )
 
-    def _extract_pain_point(self, texts: list[str], category: str) -> str:
-        """Extract the main pain point from complaint texts."""
-        # Look for common patterns
-        pain_indicators = {
-            'missing': 'lack of essential feature',
-            'wishes': 'unmet user need',
-            'frustration': 'poor user experience',
-            'complexity': 'overcomplicated workflow',
-            'pricing': 'value-price mismatch',
-            'performance': 'reliability/speed issues',
-            'support': 'inadequate customer service',
+    def _extract_best_snippet(self, text: str, feature: str) -> str:
+        """Extract the most relevant snippet from a complaint."""
+        # Clean up the text
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        # Find sentences containing the feature keywords
+        keywords = self.FEATURE_PATTERNS.get(feature, [feature])
+        sentences = re.split(r'[.!?]+', text)
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if any(kw in sentence.lower() for kw in keywords):
+                if 30 < len(sentence) < 200:
+                    return sentence
+
+        # Fallback: return first meaningful part
+        if len(text) > 150:
+            return text[:150].rsplit(' ', 1)[0] + "..."
+        return text if len(text) > 30 else ""
+
+    def _create_smart_title(self, feature: str, failing_products: list) -> str:
+        """Create an actionable title for the startup idea."""
+        feature_titles = {
+            'offline': f'Offline-First {self.topic.title()} App',
+            'sync': f'Reliable {self.topic.title()} with Cloud Sync',
+            'gps': f'Accurate {self.topic.title()} GPS/Location Tracker',
+            'ads': f'Ad-Free {self.topic.title()} Experience',
+            'subscription': f'One-Time Purchase {self.topic.title()} App',
+            'pricing': f'Affordable {self.topic.title()} Alternative',
+            'battery': f'Battery-Efficient {self.topic.title()} App',
+            'ui_ux': f'Simple, Intuitive {self.topic.title()} Tool',
+            'speed': f'Fast, Lightweight {self.topic.title()} App',
+            'crashes': f'Stable, Reliable {self.topic.title()} App',
+            'login': f'{self.topic.title()} App with Easy Auth',
+            'notifications': f'Smart {self.topic.title()} Reminders',
+            'export': f'{self.topic.title()} with Easy Export/Sharing',
+            'integration': f'{self.topic.title()} Integration Hub',
+            'accuracy': f'Precision {self.topic.title()} Tool',
+            'features_removed': f'Classic {self.topic.title()} (Restore Loved Features)',
+            'missing_feature': f'Complete {self.topic.title()} Solution',
+            'customer_support': f'{self.topic.title()} with Great Support',
         }
 
-        base_pain = pain_indicators.get(category, 'user dissatisfaction')
+        base_title = feature_titles.get(feature, f'Better {self.topic.title()} Tool')
 
-        # Try to extract specific pain from first few texts
-        sample_text = ' '.join(texts[:5]).lower()
+        # Add competitor context if available
+        if failing_products and len(failing_products) > 0:
+            top_competitor = failing_products[0].replace('r/', '')
+            if len(top_competitor) < 20:
+                return f"{base_title} (vs {top_competitor})"
 
-        # Look for specific complaint phrases
-        if 'offline' in sample_text:
-            return f"{base_pain} - no offline functionality"
-        elif 'integration' in sample_text:
-            return f"{base_pain} - missing integrations"
-        elif 'mobile' in sample_text or 'app' in sample_text:
-            return f"{base_pain} - poor mobile experience"
-        elif 'price' in sample_text or 'expensive' in sample_text:
-            return f"{base_pain} - overpriced for value"
-        elif 'slow' in sample_text or 'crash' in sample_text:
-            return f"{base_pain} - performance problems"
+        return base_title
 
-        return base_pain
+    def _create_pain_point(self, feature: str, examples: list) -> str:
+        """Create a specific pain point description."""
+        pain_points = {
+            'offline': 'Users need app functionality without internet connection',
+            'sync': 'Data loss and sync failures frustrate users',
+            'gps': 'Inaccurate GPS/location tracking is a major complaint',
+            'ads': 'Excessive ads ruin the user experience',
+            'subscription': 'Users hate recurring subscription fees',
+            'pricing': 'App is too expensive for the value provided',
+            'battery': 'App drains battery too quickly',
+            'ui_ux': 'Confusing interface makes app hard to use',
+            'speed': 'App is too slow and unresponsive',
+            'crashes': 'Frequent crashes and bugs make app unusable',
+            'login': 'Login and authentication issues block users',
+            'notifications': 'Poor or missing notification system',
+            'export': 'Users cannot export or share their data easily',
+            'integration': 'App does not integrate with other tools users need',
+            'accuracy': 'Calculations and data are inaccurate',
+            'features_removed': 'Recent updates removed features users loved',
+            'missing_feature': 'Key features users need are missing',
+            'customer_support': 'No response from customer support',
+        }
+        return pain_points.get(feature, f'Users are frustrated with {feature} issues')
 
-    def _create_idea_content(self, category: str, pain_point: str,
-                             phrases: list[tuple]) -> tuple[str, str]:
-        """Create idea title and description."""
-        # Build descriptive title
-        phrase_text = phrases[0][0] if phrases else category
-        title = f"{self.topic.title()} Solution: Address '{phrase_text}'"
+    def _create_description(self, feature: str, count: int, products: list, examples: list) -> str:
+        """Create an actionable description with real data."""
+        products_str = ", ".join(products[:3]) if products else "existing apps"
 
-        # Build description
-        if category == 'missing':
-            description = (f"Build a focused {self.topic} tool that includes the features "
-                          f"users are desperately asking for. Key opportunity: {pain_point}.")
-        elif category == 'complexity':
-            description = (f"Create a simpler, more intuitive {self.topic} solution for "
-                          f"users frustrated with existing complex tools. Focus on doing "
-                          f"one thing well.")
-        elif category == 'pricing':
-            description = (f"Launch an affordable {self.topic} alternative with "
-                          f"transparent pricing. Target users priced out of existing solutions.")
-        elif category == 'performance':
-            description = (f"Build a fast, reliable {self.topic} tool that prioritizes "
-                          f"stability and speed over feature bloat.")
-        elif category == 'wishes':
-            description = (f"Develop a {self.topic} product that fulfills unmet user desires. "
-                          f"Key feature opportunity: {pain_point}.")
+        desc = f"Found {count} complaints about {feature.replace('_', ' ')} issues. "
+        desc += f"Users of {products_str} are actively seeking alternatives. "
+
+        if feature == 'offline':
+            desc += "Build an app that works fully offline with smart sync when connected."
+        elif feature == 'ads':
+            desc += "Offer a clean, ad-free experience with optional one-time purchase."
+        elif feature == 'pricing':
+            desc += "Create freemium model with generous free tier or one-time purchase option."
+        elif feature == 'crashes':
+            desc += "Focus on stability and thorough testing before feature additions."
+        elif feature == 'ui_ux':
+            desc += "Design a clean, minimal interface that does one thing really well."
+        elif feature == 'subscription':
+            desc += "Monetize via one-time purchase or lifetime deal instead of subscriptions."
         else:
-            description = (f"Address the core {self.topic} pain point: {pain_point}. "
-                          f"Build what existing solutions are failing to deliver.")
+            desc += f"Address the core {feature.replace('_', ' ')} issue that competitors ignore."
 
-        return title, description
+        return desc
 
-    def _infer_target_audience(self, category: str) -> str:
-        """Infer target audience from topic and category."""
+    def _infer_target_audience(self) -> str:
+        """Infer target audience from topic."""
         topic_audiences = {
             'crypto': 'cryptocurrency traders and investors',
             'finance': 'personal finance enthusiasts and small businesses',
@@ -1345,9 +1428,19 @@ def print_summary(df: pd.DataFrame, ideas: list[StartupIdea], topic: str):
             print(f"Pain Point: {idea.pain_point}")
             print(f"Mentions: {idea.mention_count}")
             print(f"Sources: {', '.join(idea.sources)}")
-            print(f"Target Audience: {idea.target_audience}")
             print(f"Potential: {idea.potential_revenue}")
+
+            if idea.failing_products:
+                print(f"Competitors Failing: {', '.join(idea.failing_products[:3])}")
+
             print(f"\nDescription:\n{idea.description}")
+
+            if idea.example_complaints:
+                print(f"\nReal User Complaints:")
+                for j, quote in enumerate(idea.example_complaints[:3], 1):
+                    # Truncate long quotes
+                    display_quote = quote[:150] + "..." if len(quote) > 150 else quote
+                    print(f"  {j}. \"{display_quote}\"")
 
 
 def export_results(df: pd.DataFrame, ideas: list[StartupIdea], topic: str, output_dir: str):
@@ -1375,6 +1468,9 @@ def export_results(df: pd.DataFrame, ideas: list[StartupIdea], topic: str, outpu
                 'pain_point': idea.pain_point,
                 'mention_count': idea.mention_count,
                 'sources': idea.sources,
+                'example_complaints': idea.example_complaints,
+                'failing_products': idea.failing_products,
+                'feature_keywords': idea.feature_keywords,
                 'target_audience': idea.target_audience,
                 'potential_revenue': idea.potential_revenue,
             })
